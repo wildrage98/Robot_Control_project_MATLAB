@@ -2,180 +2,130 @@ clc
 clear all
 close all
 
-%% HW3-1: (1-DOF) Joint Space PID CTM Controller
+%% HW1: Using the Lagrangian function, derive 3 DOF robot and perform a free fall simulation. Discuss the results.
 
-% 19조_2019741054_이종우_2021741071_최나은_HW3_1.m
+% 19조_2019741054_이종우_2021741071_최나은_HW1.m
 
-% 목표 위치: 0 [deg] → 90 [deg]
-% 목표 속도: 30 [deg/s]
-% 중력 보상 오차 적용
+% dydt를 얻는 부분 -> 'get_dydt.m' 스크립트 파일
+% 계산량 및 실행 시간을 위해 사전에 dydt 수식을 얻어놓고, 'three_links.m' 파일에 저장
+% 메인함수라 볼 수 있는 이 파일에서는 앞선 파일로부터 라그랑주 미분 방정식을 가져와 실시간 수치 적분, 시뮬레이션
 
-%% 시뮬레이션 설정
+%% free-fall Simulation
 
-% 단위 변환 상수
-DR = deg2rad(1);    % Degree -> Radian 
-RD = rad2deg(1);    % Radian -> Degree 
+clear all
+close all
 
-% 시뮬레이션 플래그
-flag_Sim = 1;
-flag_Draw = 1;
-flag_Draw_Robot = 1;
-flag_Draw_Graph = 1;
+% 전역변수, 링크 성분 초기화
+global Iz1 Iz2 Iz3 L1 L2 L3 g m1 m2 m3 r1 r2 r3 tau1 tau2 tau3
 
-% 시뮬레이션 파라미터
-delta_t     = 0.005;        % [초] : 샘플링 시간
-start_t     = 0.000;        % [초] : 시작 시간
-finish_t    = 5.000;        % [초] : 종료 시간
+L1 = 0.5; L2 = 0.5; L3 = 0.5;
+r1 = 0.1; r2 = 0.1; r3 = 0.1;
+m1 = 0.2; m2 = 0.2; m3 = 0.2;
 
-g           = 9.8148;       % [m/s^2] : 중력 가속도
+Iz1 = 0.05; Iz2 = 0.05; Iz3 = 0.05;
 
-%% 로봇 파라미터
+g = 9.806; % 중력 가속도
 
-% 전역 변수
-global I L g tq m;
-m           = 1.0000;       % [kg]    : 링크 질량
-L           = 1.0000;       % [m]     : 링크 길이
-I           = (m*L^2)/3;    % [kgm^2] : 링크 관성모멘트
-tq          = 0.0000;       % [Nm]    : 제어 토크
+dt = 0.02; ft = 5; % 타임 스텝 및 총 실행 시간
 
-init_q      = 0.00;         % [rad]   : 초기 관절 각도
-init_dq     = 0.00;         % [rad/s] : 초기 각속도
-q           = init_q;       % [rad]   : 현재 관절 각도
-dq          = init_dq;      % [rad/s] : 현재 각속도
+% 초기 관절 각도 및 각속도 설정
+q1 = -pi/2; dq1 = 0;
+q2 = pi/4; dq2 = 0;
+q3 = pi/4; dq3 = 0;
 
-% 목표 위치 파라미터
-q_d         = init_q;       % [rad]     : 목표 관절 각도
-dq_d        = 0;            % [rad/s]   : 목표 각속도  (정지 상태)
-ddq_d       = 0;            % [rad/s^2] : 목표 각가속도 (정지 상태)
-Error       = q_d - q;
-Error_sum   = 0;
+data = []; % 실행 결과를 저장할 배열
 
-% 컨트롤러 게인
-Wn          = 20;           % [rad/s]    : 고유 진동수 (Natural frequency)
-Kp          = Wn^2;         % [Nm/rad]   : 비례 게인
-Kv          = 2 * Wn;       % [Nm*s/rad] : 미분 게인 (감쇠비(zeta) : 1, 비례 게인에 임계 감쇠)
-Ki          = 5000;         % [Nm/rad*s] : 적분 게인
+n = 1;
 
-%% 시뮬레이션 실행
+% 시각화를 위한 도형, 축 생성
+FG = figure('Position',[300 300 600 600],'Color',[1 1 1])
+AX = axes('parent',FG);
 
-if(flag_Sim == 1)
-    n = 1;
-    for(time = start_t:delta_t:finish_t)
-        % 목표 궤적 설정
-        if(time < 1)
-            % 초기 1초 동안은 목표 각도를 초기 각도로, 각속도 및 각가속도를 0으로 설정
-            q_d     = init_q;
-            dq_d    = 0;
-            ddq_d   = 0;
+hold on
+grid on
+axis([-2.0 2.0 -2.0 2.0]);
+
+% GIF 파일 초기화
+filename = 'simulation.gif';
+
+% 초기 링크 위치 설정
+x1 = L1*cos(q1);
+y1 = L1*sin(q1);
+Px1 = [0 x1];
+Py1 = [0 y1];
+
+x2 = L2*cos(q1+q2);
+y2 = L2*sin(q1+q2);
+Px2 = [x1 x1+x2];
+Py2 = [y1 y1+y2];
+
+x3 = L3*cos(q1+q2+q3);
+y3 = L3*sin(q1+q2+q3);
+Px3 = [x1+x2 x1+x2+x3];
+Py3 = [y1+y2 y1+y2+y3];
+
+p1 = plot(Px1,Py1,'-or','Linewidth',3);
+p2 = plot(Px2,Py2,'-og','Linewidth',3);
+p3 = plot(Px3,Py3,'-ob','Linewidth',3);
+
+% 시뮬레이션 루프
+for cnt=0:dt:ft
+    % 관절 토크를 자유낙하 시뮬레이션을 위해 0으로 설정
+    tau1 = 0.0;
+    tau2 = 0.0;
+    tau3 = 0.0;
+    
+    % 3-DOF 시스템에 대한 ode45를 사용한 수치 적분 수행
+    [t, y] = ode45('three_links', [0 dt], [q1; dq1; q2; dq2; q3; dq3]);
+    
+    % 적분 결과에서 최종 상태 값을 추출
+    index = length(y);
+    q1 = y(index,1);
+    dq1 = y(index,2);
+    q2 = y(index,3);
+    dq2 = y(index,4);
+    q3 = y(index,5);
+    dq3 = y(index,6);
+    
+    % 시각화를 위한 링크 위치 업데이트
+    x1 = L1*cos(q1);
+    y1 = L1*sin(q1);
+    Px1 = [0 x1];
+    Py1 = [0 y1];
+    
+    x2 = L2*cos(q1+q2);
+    y2 = L2*sin(q1+q2); 
+    Px2 = [x1 x1+x2];
+    Py2 = [y1 y1+y2];
+
+    x3 = L3*cos(q1+q2+q3);
+    y3 = L3*sin(q1+q2+q3);
+    Px3 = [x1+x2 x1+x2+x3];
+    Py3 = [y1+y2 y1+y2+y3];
+    
+    % 루프 카운터 증가
+    n = n+1;
+    
+    % 시뮬레이션 실행 시간 표시
+    cmd = sprintf('시간 : %2.2f',cnt);
+    clc
+    disp(cmd)
+    
+    % 부드러운 애니메이션을 위해 매 반복마다 플롯 업데이트
+    if rem(n,2)==0
+        set(p1,'XData',Px1,'YData',Py1)
+        set(p2,'XData',Px2,'YData',Py2)
+        set(p3,'XData',Px3,'YData',Py3)
+        drawnow
+
+        % 현재 프레임 캡쳐 및 GIF 파일에 저장
+        frame = getframe(gcf);
+        im = frame2im(frame);
+        [imind,cm] = rgb2ind(im,256);
+        if cnt == 0
+            imwrite(imind,cm,filename,'gif', 'Loopcount',inf, 'DelayTime', 0.1);
         else
-            % 1초 이후부터는 목표 각도를 90도로 설정
-            if(q_d < 90 * DR)
-                % 목표 각도가 90도 미만이면 각도를 45도/1.5초로 증가시킴
-                q_d = q_d + (45*DR/1.5)*delta_t;
-            else
-                % 목표 각도가 90도 이상이면 90도로 설정
-                q_d =  90 * DR;
-            end
-            % 목표 각속도 및 각가속도 설정
-            dq_d    = (q_d - simul_q_d(n-1))/delta_t;
-            ddq_d   = (dq_d - simul_dq_d(n-1))/delta_t;
+            imwrite(imind,cm,filename,'gif','WriteMode','append', 'DelayTime', 0.1);
         end
-
-        % 동역학 얻기
-        G = get_Gravity(q);
-
-        % 컨트롤러
-        Error = q_d - q;
-        Error_sum = Error_sum + Error;
-        u = ddq_d + Kv*(dq_d - dq) + Kp*Error + Ki*Error_sum*delta_t;
-        tq_ctrl = I*u + G * 0.8; % 컨트롤러가 생성한 제어 토크, 보상 토크는 중력의 80%
-        
-        % 로봇 모델
-        % 역동역학
-        tq      = tq_ctrl; % 20%의 중력 보상 오차 적용
-        [t,y]   = ode45('one_link',[0, delta_t],[q; dq]); % 라그랑주 함수 수치 적분
-        index   = length(y);
-        q       = y(index,1);
-        dq      = y(index,2);
-
-        % 데이터 저장
-        simul_time(n)   = time;     % [s]
-        simul_q(n)      = q;        % [rad]
-        simul_dq(n)     = dq;       % [rad/s]
-        simul_q_d(n)    = q_d;      % [rad]
-        simul_dq_d(n)   = dq_d;     % [rad/s]
-        n               = n+1;      % 카운터 증가
-    end
-end
-
-%% 시뮬레이션 결과 그래프
-
-if(flag_Draw == 1)
-    font_size_label = 20;
-    font_size_title = 25;
-    lineWidth_cur   = 3;
-    lineWidth_tar   = 5;
-
-    if(flag_Draw_Robot == 1)
-
-        init_x      = L*sin(init_q);
-        init_y      = -L*cos(init_q);
-
-        FG1 = figure('Position', [500 0 700 700], 'Color',[1 1 1]);
-        AX = axes('Parent',FG1);
-        hold on
-
-        p = plot([0 0],[init_x, init_y], '-ob','Linewidth',lineWidth_cur);
-
-        axis([-1.5 1.5 -1.5 1.5]);
-        grid on
-
-        xlabel('X-axis (m)','FontSize',font_size_label)
-        ylabel('Y-axis (m)','FontSize',font_size_label)
-        title('1-DOF Robot', 'FontSize',font_size_title)
-
-        n = 1;
-        for(time = start_t:delta_t:finish_t)
-            cmd = sprintf('Time : %2.2f' , time);
-            clc
-            disp(cmd)
-            q = simul_q(n);
-            x = L*sin(q);   y = -L*cos(q);
-            Px = [0,x];     Py = [0,y];
-            set(p,'XData',Px,'YData',Py)
-            drawnow
-            n = n+1;
-        end
-    end
-    if(flag_Draw_Graph == 1)
-        % 각도 그래프
-        FG2 = figure('Position', [900 100 600 300], 'Color',[1 1 1]);
-        plot(simul_time,simul_q_d * 180/pi, ':k','LineWidth',lineWidth_tar); hold on;
-        plot(simul_time,simul_q * 180/pi, 'r','LineWidth',lineWidth_cur); hold on;
-        legend('Desired','Current')
-        axis([start_t finish_t 0 120]);
-        xticks([start_t:1:finish_t])
-        yticks([0:45:90])
-        grid on
-
-        xlabel('time (s) ','FontSize',font_size_label)
-        ylabel('Angle (deg) ','FontSize',font_size_label)
-        title('Joint Space PID CTM Comtroller ','FontSize',font_size_title)
-
-        % 각속도 그래프
-        FG3 = figure('Position', [900 400 600 300], 'Color',[1 1 1]);
-        plot(simul_time,simul_dq_d * 180/pi, ':k','LineWidth',lineWidth_tar); hold on;
-        plot(simul_time,simul_dq * 180/pi, 'r','LineWidth',lineWidth_cur);
-        hold on
-        legend('Desired','Current')
-
-        axis([start_t finish_t 0 120]);
-        xticks([start_t:1:finish_t])
-        yticks([-90:45:90])
-        grid on
-
-        xlabel('time (s) ','FontSize',font_size_label)
-        ylabel('Anglular Velocity (deg/s) ','FontSize',font_size_label)
-        title('Joint Space PID CTM Comtroller ','FontSize',font_size_title)
     end
 end
